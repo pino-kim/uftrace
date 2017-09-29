@@ -33,6 +33,6 @@ endif
 
 ifneq ($(wildcard $(srcdir)/check-deps/have_libdw),)
   COMMON_CFLAGS  += -DHAVE_LIBDW
-  COMMON_CFLAGS  += $(shell pkg-config --cflags libdw)
+  COMMON_CFLAGS  += -I/usr/include/elfutils
   COMMON_LDFLAGS += $(shell pkg-config --libs   libdw)
 endif
