@@ -7,6 +7,7 @@ CHECK_LIST += have_libpython2.7
 CHECK_LIST += perf_clockid
 CHECK_LIST += perf_context_switch
 CHECK_LIST += arm_has_hardfp
+CHECK_LIST += have_libdw
 
 #
 # This is needed for checking build dependency
@@ -20,6 +21,8 @@ LDFLAGS_cxa_demangle = -lstdc++
 LDFLAGS_have_libelf = -lelf
 CFLAGS_cc_has_mno_sse2 = -mno-sse2
 LDFLAGS_have_libpython2.7 = -lpython2.7
+CFLAGS_have_libdw  = $(shell pkg-config --cflags libdw)
+LDFLAGS_have_libdw = $(shell pkg-config --libs   libdw)
 
 check-build: check-tstamp $(CHECK_LIST)
 
