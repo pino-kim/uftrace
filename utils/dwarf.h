@@ -1,6 +1,8 @@
 #ifndef UFTRACE_DWARF_H
 #define UFTRACE_DWARF_H
 
+struct sym;
+
 #ifdef HAVE_LIBDW
 
 #include <elfutils/libdw.h>
@@ -13,6 +15,8 @@ struct debug_info {
 extern int setup_debug_info(const char *filename, struct debug_info *dinfo,
 			    unsigned long offset);
 extern void release_debug_info(struct debug_info *info);
+extern char * get_dwarf_argspec(struct debug_info *dinfo, char *name, unsigned long addr);
+extern char * get_dwarf_retspec(struct debug_info *dinfo, char *name, unsigned long addr);
 
 #else /* !HAVE_LIBDW */
 
@@ -27,6 +31,14 @@ static inline int setup_debug_info(const char *filename, struct debug_info *dinf
 }
 
 static inline void release_debug_info(struct debug_info *dinfo) {}
+static inline char * get_dwarf_argspec(struct debug_info *dinfo, char *name, unsigned long addr)
+{
+	return NULL;
+}
+static inline char * get_dwarf_retspec(struct debug_info *dinfo, char *name, unsigned long addr)
+{
+	return NULL;
+}
 
 #endif /* HAVE_LIBDW */
 
