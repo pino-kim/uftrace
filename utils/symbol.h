@@ -14,6 +14,7 @@
 
 #include "utils.h"
 #include "list.h"
+#include "dwarf.h"
 
 #ifndef  STT_GNU_IFUNC
 # define STT_GNU_IFUNC  10
@@ -52,6 +53,7 @@ struct uftrace_mmap {
 	char prot[4];
 	uint32_t len;
 	struct symtab symtab;
+	struct debug_info dinfo;
 	char libname[];
 };
 
@@ -65,11 +67,13 @@ enum symtab_flag {
 
 struct symtabs {
 	bool loaded;
+	bool loaded_debug;
 	const char *dirname;
 	const char *filename;
 	enum symtab_flag flags;
 	struct symtab symtab;
 	struct symtab dsymtab;
+	struct debug_info dinfo;
 	uint64_t kernel_base;
 	struct uftrace_mmap *maps;
 };
