@@ -2,6 +2,7 @@
 #define UFTRACE_DWARF_H
 
 #include <stdint.h>
+#include <stdbool.h>
 
 struct sym;
 
@@ -21,6 +22,11 @@ extern char * get_dwarf_argspec(struct debug_info *dinfo, char *name,
 				uint64_t addr);
 extern char * get_dwarf_retspec(struct debug_info *dinfo, char *name,
 				uint64_t addr);
+
+static inline bool debug_info_available(struct debug_info *dinfo)
+{
+	return dinfo != NULL;
+}
 
 #else /* !HAVE_LIBDW */
 
@@ -44,6 +50,11 @@ static inline char * get_dwarf_retspec(struct debug_info *dinfo, char *name,
 				       uint64_t addr)
 {
 	return NULL;
+}
+
+static inline bool debug_info_available(struct debug_info *dinfo)
+{
+	return false;
 }
 
 #endif /* HAVE_LIBDW */
