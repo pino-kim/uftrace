@@ -15,6 +15,7 @@
 #include "utils/rbtree.h"
 #include "utils/utils.h"
 #include "utils/list.h"
+#include "utils/dwarf.h"
 
 static void snprintf_trigger_read(char *buf, size_t len,
 				  enum trigger_read_type type)
@@ -216,7 +217,8 @@ void add_trigger(struct uftrace_filter *filter, struct uftrace_trigger *tr,
 }
 
 static int add_filter(struct rb_root *root, struct uftrace_filter *filter,
-		       struct uftrace_trigger *tr, bool exact_match)
+		      struct uftrace_trigger *tr, bool exact_match,
+		      struct debug_info *dinfo)
 {
 	struct rb_node *parent = NULL;
 	struct rb_node **p = &root->rb_node;
@@ -226,12 +228,12 @@ static int add_filter(struct rb_root *root, struct uftrace_filter *filter,
 	unsigned long orig_flags = tr->flags;
 
 	if ((tr->flags & TRIGGER_FL_ARGUMENT) && list_empty(tr->pargs)) {
-		auto_arg = find_auto_argspec(filter->name);
+		auto_arg = find_auto_argspec(filter, tr, dinfo);
 		if (auto_arg == NULL)
 			tr->flags &= ~TRIGGER_FL_ARGUMENT;
 	}
 	if ((tr->flags & TRIGGER_FL_RETVAL) && list_empty(tr->pargs)) {
-		auto_ret = find_auto_retspec(filter->name);
+		auto_ret = find_auto_retspec(filter, tr, dinfo);
 		if (auto_ret == NULL)
 			tr->flags &= ~TRIGGER_FL_RETVAL;
 	}
@@ -296,7 +298,8 @@ static int add_filter(struct rb_root *root, struct uftrace_filter *filter,
 }
 
 static int add_exact_filter(struct rb_root *root, struct symtab *symtab,
-			    char *filter_str, struct uftrace_trigger *tr)
+			    char *filter_str, struct uftrace_trigger *tr,
+			    struct debug_info *dinfo)
 {
 	struct uftrace_filter filter;
 	struct sym *sym;
@@ -309,11 +312,12 @@ static int add_exact_filter(struct rb_root *root, struct symtab *symtab,
 	filter.start = sym->addr;
 	filter.end = sym->addr + sym->size;
 
-	return add_filter(root, &filter, tr, true);
+	return add_filter(root, &filter, tr, true, dinfo);
 }
 
 static int add_regex_filter(struct rb_root *root, struct symtab *symtab,
-			    char *filter_str, struct uftrace_trigger *tr)
+			    char *filter_str, struct uftrace_trigger *tr,
+			    struct debug_info *dinfo)
 {
 	struct uftrace_filter filter;
 	struct sym *sym;
@@ -336,7 +340,7 @@ static int add_regex_filter(struct rb_root *root, struct symtab *symtab,
 		filter.start = sym->addr;
 		filter.end = sym->addr + sym->size;
 
-		ret += add_filter(root, &filter, tr, false);
+		ret += add_filter(root, &filter, tr, false, dinfo);
 	}
 
 	regfree(&re);
@@ -504,7 +508,7 @@ out:
 }
 
 /* argument_spec = arg1/i32,arg2/x64%reg,arg3%stack+1,... */
-static int parse_argument_spec(char *str, struct uftrace_trigger *tr)
+int parse_argument_spec(char *str, struct uftrace_trigger *tr)
 {
 	struct uftrace_arg_spec *arg;
 	char *suffix;
@@ -530,7 +534,7 @@ static int parse_argument_spec(char *str, struct uftrace_trigger *tr)
 	return 0;
 }
 /* argument_spec = retval/i32 or retval/x64 ... */
-static int parse_retval_spec(char *str, struct uftrace_trigger *tr)
+int parse_retval_spec(char *str, struct uftrace_trigger *tr)
 {
 	struct uftrace_arg_spec *arg;
 	char *suffix;
@@ -555,7 +559,7 @@ static int parse_retval_spec(char *str, struct uftrace_trigger *tr)
 }
 
 /* argument_spec = fparg1/32,fparg2/64%stack+1,... */
-static int parse_float_argument_spec(char *str, struct uftrace_trigger *tr)
+int parse_float_argument_spec(char *str, struct uftrace_trigger *tr)
 {
 	struct uftrace_arg_spec *arg;
 	char *suffix;
@@ -794,12 +798,13 @@ out:
 
 static int add_trigger_entry(struct rb_root *root, struct symtab *symtab,
 			     char *name, bool is_regex,
-			     struct uftrace_trigger *tr)
+			     struct uftrace_trigger *tr,
+			     struct debug_info *dinfo)
 {
 	if (is_regex)
-		return add_regex_filter(root, symtab, name, tr);
+		return add_regex_filter(root, symtab, name, tr, dinfo);
 	else
-		return add_exact_filter(root, symtab, name, tr);
+		return add_exact_filter(root, symtab, name, tr, dinfo);
 }
 
 static void setup_trigger(char *filter_str, struct symtabs *symtabs,
@@ -808,6 +813,7 @@ static void setup_trigger(char *filter_str, struct symtabs *symtabs,
 {
 	char *str;
 	char *pos, *name;
+	struct debug_info dinfo = {};
 
 	if (filter_str == NULL)
 		return;
@@ -815,6 +821,10 @@ static void setup_trigger(char *filter_str, struct symtabs *symtabs,
 	pos = str = strdup(filter_str);
 	if (str == NULL)
 		return;
+
+	if (flags & (TRIGGER_FL_ARGUMENT | TRIGGER_FL_RETVAL))
+		setup_debug_info(symtabs->filename, &dinfo,
+				 symtabs->maps->start);
 
 	name = strtok(pos, ";");
 	while (name) {
@@ -861,21 +871,26 @@ static void setup_trigger(char *filter_str, struct symtabs *symtabs,
 			if (!strncmp(module, basename(symtabs->filename),
 				     strlen(module))) {
 				ret += add_trigger_entry(root, &symtabs->symtab,
-							 name, is_regex, &tr);
+							 name, is_regex, &tr,
+							 &dinfo);
 				ret += add_trigger_entry(root, &symtabs->dsymtab,
-							 name, is_regex, &tr);
+							 name, is_regex, &tr,
+							 &dinfo);
 			}
 			else if (!strcasecmp(module, "PLT")) {
 				ret = add_trigger_entry(root, &symtabs->dsymtab,
-							name, is_regex, &tr);
+							name, is_regex, &tr,
+							&dinfo);
 			}
 			else if (!strcasecmp(module, "kernel")) {
 				ret = add_trigger_entry(root, get_kernel_symtab(),
-							name, is_regex, &tr);
+							name, is_regex, &tr,
+							&dinfo);
 			}
 			else {
 				ret = add_trigger_entry(root, &map->symtab,
-							name, is_regex, &tr);
+							name, is_regex, &tr,
+							&dinfo);
 			}
 
 			free(module);
@@ -883,15 +898,16 @@ static void setup_trigger(char *filter_str, struct symtabs *symtabs,
 		else {
 			/* check main executable's symtab first */
 			ret += add_trigger_entry(root, &symtabs->symtab, name,
-						 is_regex, &tr);
+						 is_regex, &tr, &dinfo);
 			ret += add_trigger_entry(root, &symtabs->dsymtab, name,
-						 is_regex, &tr);
+						 is_regex, &tr, &dinfo);
 
 			/* and then find all module's symtabs */
 			map = symtabs->maps;
 			while (map) {
 				ret += add_trigger_entry(root, &map->symtab,
-							 name, is_regex, &tr);
+							 name, is_regex, &tr,
+							 &dinfo);
 				map = map->next;
 			}
 		}
@@ -915,6 +931,7 @@ next:
 
 	}
 
+	release_debug_info(&dinfo);
 	free(str);
 }
 
