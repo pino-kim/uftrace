@@ -1,6 +1,7 @@
 #ifdef HAVE_LIBDW
 
 #include <stdio.h>
+#include <stdbool.h>
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -11,6 +12,7 @@
 #include "utils/utils.h"
 #include "utils/dwarf.h"
 #include "utils/symbol.h"
+#include "utils/filter.h"
 
 /* setup debug info from filename, return 0 for success */
 int setup_debug_info(const char *filename, struct debug_info *dinfo,
@@ -55,16 +57,145 @@ void release_debug_info(struct debug_info *dinfo)
 	dinfo->dw = NULL;
 }
 
+struct type_data {
+	enum uftrace_arg_format		fmt;
+	int				size;
+	int				pointer;
+};
+
+static int arg_type_cb(Dwarf_Attribute *attr, void *arg)
+{
+	unsigned aname = dwarf_whatattr(attr);
+	unsigned aform = dwarf_whatform(attr);
+	struct type_data *td = arg;
+	Dwarf_Die die;
+	Dwarf_Attribute type;
+	bool done = false;
+	const char *tname;
+
+	if (aname != DW_AT_type)
+		return DWARF_CB_OK;
+
+	while (!done) {
+		switch (aform) {
+		case DW_FORM_ref1:
+		case DW_FORM_ref2:
+		case DW_FORM_ref4:
+		case DW_FORM_ref8:
+		case DW_FORM_ref_udata:
+		case DW_FORM_ref_addr:
+		case DW_FORM_ref_sig8:
+		case DW_FORM_GNU_ref_alt:
+			dwarf_formref_die(attr, &die);
+			break;
+		default:
+			done = true;
+			continue;
+		}
+
+		switch (dwarf_tag(&die)) {
+		case DW_TAG_base_type:
+			tname = dwarf_diename(&die);
+			if (!strcmp(tname, "char") ||
+			    !strcmp(tname, "signed char")) {
+				if (td->pointer == 0)
+					td->fmt = ARG_FMT_CHAR;
+				else if (td->pointer == 1)
+					td->fmt = ARG_FMT_STR;
+			}
+			else if (!strcmp(tname, "float")) {
+				td->fmt = ARG_FMT_FLOAT;
+				td->size = 32;
+			}
+			else if (!strcmp(tname, "double")) {
+				td->fmt = ARG_FMT_FLOAT;
+				td->size = 64;
+			}
+			done = true;
+			continue;
+		case DW_TAG_pointer_type:
+		case DW_TAG_ptr_to_member_type:
+			td->pointer++;
+			/* fall through */
+		case DW_TAG_reference_type:
+		case DW_TAG_rvalue_reference_type:
+		case DW_TAG_array_type:
+		default:
+			if (!dwarf_hasattr(&die, DW_AT_type)) {
+				done = true;
+				continue;
+			}
+			break;
+		}
+
+		pr_dbg3("dwarf: %s (tag %d)\n", dwarf_diename(&die), dwarf_tag(&die));
+		dwarf_attr(&die, DW_AT_type, &type);
+		aform = dwarf_whatform(&type);
+		attr = &type;
+	}
+
+	return DWARF_CB_ABORT;
+}
+
 struct arg_data {
 	const char	*name;
 	char		*argspec;
+	int		idx;
+	int		fpidx;
 };
+
+static void add_type_info(char *spec, size_t len, Dwarf_Die *die, void *arg)
+{
+	struct arg_data *ad = arg;
+	struct type_data data = {
+		.fmt = ARG_FMT_AUTO,
+	};
+	Dwarf_Die origin;
+
+	if (!dwarf_hasattr(die, DW_AT_type)) {
+		Dwarf_Attribute attr;
+
+		if (!dwarf_hasattr(die, DW_AT_abstract_origin))
+			return;
+
+		dwarf_attr(die, DW_AT_abstract_origin, &attr);
+		dwarf_formref_die(&attr, &origin);
+		die = &origin;
+	}
+
+	dwarf_getattrs(die, arg_type_cb, &data, 0);
+
+	switch (data.fmt) {
+	case ARG_FMT_CHAR:
+		strcat(spec, "/c");
+		break;
+	case ARG_FMT_STR:
+		strcat(spec, "/s");
+		break;
+	case ARG_FMT_FLOAT:
+		if (ad->idx) {  /* for arguments */
+			snprintf(spec, len, "fparg%d/%d",
+				 ++ad->fpidx, data.size);
+			/* do not increase index of integer arguments */
+			--ad->idx;
+		}
+		else {  /* for return values */
+			char sz[4];
+
+			snprintf(sz, sizeof(sz), "%d", data.size);
+			strcat(spec, "/f");
+			strcat(spec, sz);
+		}
+		break;
+	default:
+		break;
+	}
+}
 
 static int get_argspec_cb(Dwarf_Die *die, void *data)
 {
 	struct arg_data *ad = data;
 	Dwarf_Die arg;
-	int idx = 0;
 
 	if (strcmp(dwarf_diename(die), ad->name))
 		return DWARF_CB_OK;
@@ -79,7 +210,8 @@ static int get_argspec_cb(Dwarf_Die *die, void *data)
 	while (dwarf_tag(&arg) == DW_TAG_formal_parameter) {
 		char buf[256];
 
-		snprintf(buf, sizeof(buf), "arg%d", ++idx);
+		snprintf(buf, sizeof(buf), "arg%d", ++ad->idx);
+		add_type_info(buf, sizeof(buf), &arg, ad);
 
 		if (ad->argspec == NULL)
 			xasprintf(&ad->argspec, "@%s", buf);
@@ -97,15 +229,25 @@ static int get_retspec_cb(Dwarf_Die *die, void *data)
 {
 	struct arg_data *ad = data;
 	char buf[256];
+	Dwarf_Die spec;
 
 	if (strcmp(dwarf_diename(die), ad->name))
 		return DWARF_CB_OK;
 
 	pr_dbg2("found '%s' function for retspec\n", ad->name);
 
+retry:
 	if (dwarf_hasattr(die, DW_AT_type)) {
 		snprintf(buf, sizeof(buf), "@retval");
+		add_type_info(buf, sizeof(buf), die, ad);
 		ad->argspec = xstrdup(buf);
+	} else if (dwarf_hasattr(die, DW_AT_specification)) {
+		Dwarf_Attribute attr;
+
+		dwarf_attr(die, DW_AT_specification, &attr);
+		dwarf_formref_die(&attr, &spec);
+		die = &spec;
+		goto retry;
 	}
 
 	return DWARF_CB_ABORT;
