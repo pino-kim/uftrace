@@ -740,6 +740,8 @@ static error_t parse_option(int key, char *arg, struct argp_state *state)
 			opts->mode = UFTRACE_MODE_GRAPH;
 		else if (!strcmp("script", arg))
 			opts->mode = UFTRACE_MODE_SCRIPT;
+		else if (!strcmp("tui", arg))
+			opts->mode = UFTRACE_MODE_TUI;
 		else
 			return ARGP_ERR_UNKNOWN; /* almost same as fall through */
 		break;
@@ -792,7 +794,7 @@ static void parse_opt_file(int *argc, char ***argv, char *filename, struct opts 
 	struct argp file_argp = {
 		.options = uftrace_options,
 		.parser = parse_option,
-		.args_doc = "[record|replay|live|report|info|dump|recv|graph|script] [<program>]",
+		.args_doc = "[record|replay|live|report|info|dump|recv|graph|script|tui] [<program>]",
 		.doc = "uftrace -- function (graph) tracer for userspace",
 	};
 	char *orig_exename = NULL;
@@ -865,7 +867,7 @@ void parse_script_opt(struct opts *opts)
 	struct argp opt_argp = {
 		.options = uftrace_options,
 		.parser = parse_option,
-		.args_doc = "[record|replay|live|report|info|dump|recv|graph|script] [<program>]",
+		.args_doc = "[record|replay|live|report|info|dump|recv|graph|script|tui] [<program>]",
 		.doc = "uftrace -- function (graph) tracer for userspace",
 	};
 
@@ -946,7 +948,7 @@ int main(int argc, char *argv[])
 	struct argp argp = {
 		.options = uftrace_options,
 		.parser = parse_option,
-		.args_doc = "[record|replay|live|report|info|dump|recv|graph|script] [<program>]",
+		.args_doc = "[record|replay|live|report|info|dump|recv|graph|script|tui] [<program>]",
 		.doc = "uftrace -- function (graph) tracer for userspace",
 	};
 	int ret = -1;
@@ -991,7 +993,9 @@ int main(int argc, char *argv[])
 	setup_color(opts.color);
 	setup_signal();
 
-	if (opts.mode == UFTRACE_MODE_RECORD || opts.mode == UFTRACE_MODE_RECV)
+	if (opts.mode == UFTRACE_MODE_RECORD ||
+	    opts.mode == UFTRACE_MODE_RECV ||
+	    opts.mode == UFTRACE_MODE_TUI)
 		opts.use_pager = false;
 	if (opts.nop)
 		opts.use_pager = false;
@@ -1026,6 +1030,9 @@ int main(int argc, char *argv[])
 		break;
 	case UFTRACE_MODE_SCRIPT:
 		ret = command_script(argc, argv, &opts);
+		break;
+	case UFTRACE_MODE_TUI:
+		ret = command_tui(argc, argv, &opts);
 		break;
 	case UFTRACE_MODE_INVALID:
 		ret = 1;
