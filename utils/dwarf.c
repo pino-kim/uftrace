@@ -284,7 +284,36 @@ struct type_data {
 	enum uftrace_arg_format		fmt;
 	int				size;
 	int				pointer;
+	char 				*enum_name;
 };
+
+static char * fill_enum_str(Dwarf_Die *die)
+{
+	char *str = NULL;
+	Dwarf_Die e_val;
+
+	if (dwarf_child(die, &e_val) != 0) {
+		pr_dbg2("no enum values\n");
+		return NULL;
+	}
+
+	while (dwarf_tag(&e_val) == DW_TAG_enumerator) {
+		char buf[256];
+		Dwarf_Attribute attr_val;
+		Dwarf_Sword val;
+
+		dwarf_attr(&e_val, DW_AT_const_value, &attr_val);
+		dwarf_formsdata(&attr_val, &val);
+		snprintf(buf, sizeof(buf), "%s=%ld", dwarf_diename(&e_val), (long)val);
+
+		str = strjoin(str, buf, ",");
+
+		if (dwarf_siblingof(&e_val, &e_val) != 0)
+			break;
+	}
+
+	return str;
+}
 
 static bool resolve_type_info(Dwarf_Die *die, void *arg)
 {
@@ -293,6 +322,8 @@ static bool resolve_type_info(Dwarf_Die *die, void *arg)
 	Dwarf_Attribute type;
 	unsigned aform;
 	const char *tname;
+	char *enum_def;
+	char *enum_str;
 
 	/*
 	 * type refers to another type in a chain like:
@@ -320,6 +351,23 @@ static bool resolve_type_info(Dwarf_Die *die, void *arg)
 		}
 
 		switch (dwarf_tag(die)) {
+		case DW_TAG_enumeration_type:
+			enum_str = fill_enum_str(die);
+			if (enum_str == NULL)
+				return false;  /* use default format */
+
+			td->fmt = ARG_FMT_ENUM;
+			td->enum_name = xstrdup(dwarf_diename(die));
+
+			xasprintf(&enum_def, "enum %s { %s }",
+				  td->enum_name, enum_str);
+			pr_dbg3("%s\n", enum_str);
+
+			parse_enum_string(enum_def, &dwarf_enum);
+			free(enum_def);
+			free(enum_str);
+			return true;
+
 		case DW_TAG_pointer_type:
 		case DW_TAG_ptr_to_member_type:
 			td->pointer++;
@@ -422,6 +470,10 @@ static void add_type_info(char *spec, size_t len, Dwarf_Die *die, void *arg)
 			strcat(spec, "/f");
 			strcat(spec, sz);
 		}
+		break;
+	case ARG_FMT_ENUM:
+		strcat(spec, "/e:");
+		strcat(spec, data.enum_name);
 		break;
 	default:
 		break;

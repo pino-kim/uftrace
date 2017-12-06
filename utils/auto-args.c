@@ -19,6 +19,9 @@ static struct rb_root auto_argspec = RB_ROOT;
 static struct rb_root auto_retspec = RB_ROOT;
 static struct rb_root auto_enum = RB_ROOT;
 
+/* used by utils/dwarf.c */
+struct rb_root dwarf_enum = RB_ROOT;
+
 extern void add_trigger(struct uftrace_filter *filter, struct uftrace_trigger *tr,
 			bool exact_match);
 extern int setup_trigger_action(char *str, struct uftrace_trigger *tr,
@@ -536,7 +539,10 @@ char *get_enum_string(char *name, long val)
 	struct enum_def *e_def;
 	char *ret;
 
-	e_def = find_enum_def(&auto_enum, name);
+	e_def = find_enum_def(&dwarf_enum, name);
+	if (e_def == NULL)
+		e_def = find_enum_def(&auto_enum, name);
+
 	if (e_def == NULL)
 		xasprintf(&ret, "%ld", val);
 	else
