@@ -166,7 +166,7 @@ static int find_got(Elf *elf, const char *modname,
 			bind_now = true;
 	}
 
-	if (!pltgot_addr || (!plt_found && !bind_now)) {
+	if (!plt_found && !bind_now) {
 		pr_dbg2("no PLTGOT nor BIND-NOW.. ignoring...\n");
 		return 0;
 	}
@@ -187,13 +187,12 @@ static int find_got(Elf *elf, const char *modname,
 
 		if (strcmp(shstr, ".plt") == 0) {
 			plt_addr = shdr.sh_addr + offset;
-			break;
 		}
-	}
-
-	if (plt_addr == 0) {
-		pr_dbg("cannot find PLT address\n");
-		return 0;
+		if (strcmp(shstr, ".got") == 0) {
+			/* XXX: assume .got[0] == _GLOBAL_OFFSET_TABLE_ */
+			if (pltgot_addr == 0)
+				pltgot_addr = shdr.sh_addr + offset;
+		}
 	}
 
 	pd = xmalloc(sizeof(*pd));
