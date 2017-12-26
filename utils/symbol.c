@@ -586,7 +586,7 @@ int load_elf_dynsymtab(struct symtab *dsymtab, Elf *elf,
 		}
 	}
 
-	if (dynsym_sec == NULL || dynamic_sec == NULL || plt_addr == 0) {
+	if (dynsym_sec == NULL || dynamic_sec == NULL) {
 		pr_dbg2("cannot find dynamic symbols.. skipping\n");
 		ret = 0;
 		goto out;
