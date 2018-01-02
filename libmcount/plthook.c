@@ -163,6 +163,7 @@ static int find_got(Elf *elf, const char *modname,
 		    Elf_Data *dyn_data, size_t nr_dyn, unsigned long offset)
 {
 	size_t i;
+	bool has_text = false;
 	bool plt_found = false;
 	bool bind_now = false;
 	unsigned long pltgot_addr = 0;
@@ -206,6 +207,9 @@ static int find_got(Elf *elf, const char *modname,
 
 		shstr = elf_strptr(elf, shstr_idx, shdr.sh_name);
 
+		if (strcmp(shstr, ".text") == 0) {
+			has_text = true;
+		}
 		if (strcmp(shstr, ".plt") == 0) {
 			plt_addr = shdr.sh_addr + offset;
 		}
@@ -215,6 +219,9 @@ static int find_got(Elf *elf, const char *modname,
 				pltgot_addr = shdr.sh_addr + offset;
 		}
 	}
+
+	if (!has_text)  /* data-only library */
+		return 0;
 
 	pd = xmalloc(sizeof(*pd));
 	pd->mod_name   = xstrdup(modname);
