@@ -409,6 +409,34 @@ char * strjoin(char *left, char *right, char *delim)
 	return new;
 }
 
+char ** strsplit(char *str, char *delim)
+{
+	int c = 1;
+	char *tmp = str;
+	char *pos;
+	char **ret;
+	size_t len = strlen(delim);
+
+	while ((pos = strstr(tmp, delim)) != NULL) {
+		tmp = pos + len;
+		c++;
+	}
+
+	ret = xcalloc(c + 1, sizeof(*ret));
+
+	c = 0;
+	tmp = str;
+
+	while ((pos = strstr(tmp, delim)) != NULL) {
+		*pos = '\0';
+		ret[c++] = xstrdup(tmp);
+		tmp = pos + len;
+	}
+	ret[c] = xstrdup(tmp);
+
+	return ret;
+}
+
 #define QUOTE '\''
 #define DQUOTE '"'
 #define QUOTES "\'\""
