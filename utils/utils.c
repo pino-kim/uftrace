@@ -389,7 +389,7 @@ uint64_t parse_time(char *arg, int limited_digits)
 	return val;
 }
 
-char * strjoin(char *left, char *right, char *delim)
+char * strjoin(char *left, char *right, const char *delim)
 {
 	size_t llen = left ? strlen(left) : 0;
 	size_t rlen = strlen(right);
@@ -407,6 +407,80 @@ char * strjoin(char *left, char *right, char *delim)
 
 	strcpy(new + len - rlen - 1, right);
 	return new;
+}
+
+void strv_split(struct strv *strv, const char *str, const char *delim)
+{
+	int c = 1;
+	char *saved_str = xstrdup(str);
+	char *tmp, *pos;
+	size_t len = strlen(delim);
+
+	tmp = saved_str;
+	while ((pos = strstr(tmp, delim)) != NULL) {
+		tmp = pos + len;
+		c++;
+	}
+
+	strv->nr = c;
+	strv->p = xcalloc(c + 1, sizeof(*strv->p));  /* including NULL at last */
+
+	c = 0;
+	tmp = saved_str;
+
+	while ((pos = strstr(tmp, delim)) != NULL) {
+		*pos = '\0';
+		strv->p[c++] = xstrdup(tmp);
+		tmp = pos + len;
+	}
+	strv->p[c] = xstrdup(tmp);
+
+	free(saved_str);
+}
+
+void strv_copy(struct strv *strv, int argc, char *argv[])
+{
+	int i;
+
+	strv->nr = argc;
+	strv->p = xcalloc(argc + 1, sizeof(*strv->p));
+
+	for (i = 0; i < argc; i++)
+		strv->p[i] = xstrdup(argv[i]);
+}
+
+void strv_append(struct strv *strv, const char *str)
+{
+	strv->p = xrealloc(strv->p, (strv->nr + 2) * sizeof(*strv->p));
+
+	strv->p[strv->nr + 0] = xstrdup(str);
+	strv->p[strv->nr + 1] = NULL;
+	strv->nr++;
+}
+
+char * strv_join(struct strv *strv, const char *delim)
+{
+	int i;
+	char *s;
+	char *str = NULL;
+
+	strv_for_each(strv, s, i)
+		str = strjoin(str, s, delim);
+
+	return str;
+}
+
+void strv_free(struct strv *strv)
+{
+	int i;
+	char *s;
+
+	strv_for_each(strv, s, i)
+		free(s);
+
+	free(strv->p);
+	strv->p = NULL;
+	strv->nr = 0;
 }
 
 #define QUOTE '\''
@@ -595,7 +669,7 @@ char *absolute_dirname(const char *path, char *resolved_path)
 }
 
 #ifdef UNIT_TEST
-TEST_CASE(parse_cmdline)
+TEST_CASE(utils_parse_cmdline)
 {
 	char **cmdv;
 	int argc = -1;
@@ -611,6 +685,46 @@ TEST_CASE(parse_cmdline)
 	TEST_STREQ(cmdv[2], "--run-cmd");
 	TEST_STREQ(cmdv[3], "uftrace replay");
 	free_parsed_cmdline(cmdv);
+
+	return TEST_OK;
+}
+
+TEST_CASE(utils_strv)
+{
+	struct strv strv = INIT_STRV;
+	char *s;
+	int i;
+
+	const char test_str[] = "abc;def;xyz";
+	const char * test_array[] = { "abc", "def", "xyz" };
+
+	TEST_EQ(strv.nr, 0);
+	TEST_EQ(strv.p, NULL);
+
+	strv_split(&strv, test_str, ";");
+	strv_for_each(&strv, s, i)
+		TEST_STREQ(s, test_array[i]);
+
+	s = strv_join(&strv, ";");
+	TEST_STREQ(s, test_str);
+	free(s);
+
+	TEST_EQ(strv.nr, 3);
+	strv_free(&strv);
+	TEST_EQ(strv.nr, 0);
+
+	for (i = 0; i < 3; i++) {
+		strv_append(&strv, test_array[i]);
+		TEST_STREQ(strv.p[i], test_array[i]);
+		TEST_EQ(strv.nr, i + 1);
+	}
+
+	s = strv_join(&strv, ";");
+	TEST_STREQ(s, test_str);
+	free(s);
+
+	TEST_EQ(strv.nr, 3);
+	strv_free(&strv);
 
 	return TEST_OK;
 }
