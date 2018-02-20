@@ -629,9 +629,17 @@ int script_init_for_python(struct script_info *info)
 	if (pFuncBegin && __PyCallable_Check(pFuncBegin)) {
 		PyObject *ctx = __PyTuple_New(1);
 		PyObject *dict = __PyDict_New();
+		PyObject *args = __PyTuple_New(info->argc);
+		int i;
 
 		insert_dict_bool(dict, "recording", info->recording);
 		insert_dict_string(dict, "version", info->version);
+
+		for (i = 0; i < info->argc; i++) {
+			insert_tuple_string(args, i, info->argv[i]);
+		}
+		__PyDict_SetItemString(dict, "args", args);
+		Py_XDECREF(args);
 
 		__PyTuple_SetItem(ctx, 0, dict);
 		__PyObject_CallObject(pFuncBegin, ctx);

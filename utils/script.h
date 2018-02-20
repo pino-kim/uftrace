@@ -22,6 +22,8 @@ struct script_info {
 	char			*name;
 	char			*version;
 	bool			recording;
+	int                     argc;
+	char                    **argv;
 };
 
 /* context information passed to script */

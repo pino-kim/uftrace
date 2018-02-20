@@ -133,6 +133,8 @@ int command_script(int argc, char *argv[], struct opts *opts)
 	struct script_info info = {
 		.name           = opts->script_file,
 		.version        = UFTRACE_VERSION,
+		.argc           = argc,
+		.argv           = argv,
 	};
 
 	if (!SCRIPT_ENABLED) {
