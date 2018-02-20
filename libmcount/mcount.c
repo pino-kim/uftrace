@@ -1151,6 +1151,25 @@ static void atfork_child_handler(void)
 	mtdp->recursion_guard = false;
 }
 
+static void mcount_script_init(void)
+{
+	struct script_info info = {
+		.name           = script_str,
+		.version        = UFTRACE_VERSION,
+		.recording      = true,
+	};
+	char *args_str;
+
+	args_str = getenv("UFTRACE_ARGS");
+	if (args_str)
+		strv_split(&info.args, args_str, "\n");
+
+	if (script_init(&info) < 0)
+		script_str = NULL;
+
+	strv_free(&info.args);
+}
+
 static void mcount_startup(void)
 {
 	char *pipefd_str;
@@ -1277,16 +1296,8 @@ static void mcount_startup(void)
 	mcount_hook_functions();
 
 	/* initialize script binding */
-	if (SCRIPT_ENABLED && script_str) {
-		struct script_info info = {
-			.name           = script_str,
-			.version        = UFTRACE_VERSION,
-			.recording      = true,
-		};
-
-		if (script_init(&info) < 0)
-			script_str = NULL;
-	}
+	if (SCRIPT_ENABLED && script_str)
+		mcount_script_init();
 
 	compiler_barrier();
 	pr_dbg("mcount setup done\n");

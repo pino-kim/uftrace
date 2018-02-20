@@ -88,7 +88,8 @@ static char *build_debug_domain_string(void)
 	return domain;
 }
 
-static void setup_child_environ(struct opts *opts, int pfd)
+static void setup_child_environ(struct opts *opts, int pfd,
+				int argc, char *argv[])
 {
 	char buf[4096];
 	char *old_preload, *old_libpath;
@@ -242,6 +243,17 @@ static void setup_child_environ(struct opts *opts, int pfd)
 
 	if (opts->script_file)
 		setenv("UFTRACE_SCRIPT", opts->script_file, 1);
+
+	if (argc > 0) {
+		char *args = NULL;
+		int i;
+
+		for (i = 0; i < argc; i++)
+			args = strjoin(args, argv[i], "\n");
+
+		setenv("UFTRACE_ARGS", args, 1);
+		free(args);
+	}
 
 	if (opts->lib_path)
 		snprintf(buf, sizeof(buf), "%s/libmcount/", opts->lib_path);
@@ -1810,13 +1822,14 @@ int do_main_loop(int pfd[2], int ready, struct opts *opts, int pid)
 	return ret;
 }
 
-int do_child_exec(int pfd[2], int ready, struct opts *opts, char *argv[])
+int do_child_exec(int pfd[2], int ready, struct opts *opts,
+		  int argc, char *argv[])
 {
 	uint64_t dummy;
 
 	close(pfd[0]);
 
-	setup_child_environ(opts, pfd[1]);
+	setup_child_environ(opts, pfd[1], argc, argv);
 
 	/* wait for parent ready */
 	if (read(ready, &dummy, sizeof(dummy)) != (ssize_t)sizeof(dummy))
@@ -1865,12 +1878,12 @@ int command_record(int argc, char *argv[], struct opts *opts)
 		if (opts->keep_pid)
 			ret = do_main_loop(pfd, efd, opts, getppid());
 		else
-			do_child_exec(pfd, efd, opts, argv);
+			do_child_exec(pfd, efd, opts, argc, argv);
 		return ret;
 	}
 
 	if (opts->keep_pid)
-		do_child_exec(pfd, efd, opts, argv);
+		do_child_exec(pfd, efd, opts, argc, argv);
 	else
 		ret = do_main_loop(pfd, efd, opts, pid);
 	return ret;
