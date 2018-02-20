@@ -1276,9 +1276,14 @@ static void mcount_startup(void)
 	mcount_hook_functions();
 
 	/* initialize script binding */
-	if (SCRIPT_ENABLED && script_str)
-		if (script_init(script_str) < 0)
+	if (SCRIPT_ENABLED && script_str) {
+		struct script_info info = {
+			.name           = script_str,
+		};
+
+		if (script_init(&info) < 0)
 			script_str = NULL;
+	}
 
 	compiler_barrier();
 	pr_dbg("mcount setup done\n");

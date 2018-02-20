@@ -17,6 +17,11 @@ enum script_type_t {
 	SCRIPT_PYTHON
 };
 
+/* informantion passed during initialization */
+struct script_info {
+	char			*name;
+};
+
 /* context information passed to script */
 struct script_context {
 	int			tid;
@@ -44,7 +49,7 @@ extern script_uftrace_exit_t script_uftrace_exit;
 extern script_uftrace_end_t script_uftrace_end;
 extern script_atfork_prepare_t script_atfork_prepare;
 
-int script_init(char *script_pathname);
+int script_init(struct script_info *info);
 void script_finish(void);
 
 void script_add_filter(char *func);

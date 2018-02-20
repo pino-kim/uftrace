@@ -105,8 +105,10 @@ void script_finish_filter(void)
 	}
 }
 
-int script_init(char *script_pathname)
+int script_init(struct script_info *info)
 {
+	char *script_pathname = info->name;
+
 	pr_dbg2("%s(\"%s\")\n", __func__, script_pathname);
 	if (access(script_pathname, F_OK) < 0) {
 		perror(script_pathname);
@@ -116,7 +118,7 @@ int script_init(char *script_pathname)
 	script_lang = get_script_type(script_pathname);
 	switch (script_lang) {
 	case SCRIPT_PYTHON:
-		if (script_init_for_python(script_pathname) < 0) {
+		if (script_init_for_python(info) < 0) {
 			pr_dbg("failed to init python scripting\n");
 			script_pathname = NULL;
 		}
