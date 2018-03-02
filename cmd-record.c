@@ -1341,6 +1341,164 @@ static void save_session_symbols(struct opts *opts)
 	free(map_list);
 }
 
+struct dwarf_arg_pattern {
+	struct uftrace_pattern patt;
+	struct list_head list;
+};
+
+static int add_dwarf_argspec(enum uftrace_pattern_type ptype, char *spec,
+			     struct list_head *head)
+{
+	struct dwarf_arg_pattern *argp;
+	struct strv strv = STRV_INIT;
+	char *str;
+	int i;
+	int count = 0;
+
+	strv_split(&strv, spec, ";");
+
+	strv_for_each(&strv, str, i) {
+		if (strchr(str, '@'))
+			continue;
+
+		argp = xmalloc(sizeof(*argp));
+		init_filter_pattern(ptype, &argp->patt, str);
+		list_add_tail(&argp->list, head);
+		count++;
+	}
+	strv_free(&strv);
+
+	return count;
+}
+
+/* find args which doesn't have user-given spec */
+static bool build_dwarf_argspec(struct opts *opts, struct list_head *args,
+				struct list_head *rets)
+{
+	int count = 0;
+
+	if (opts->args)
+		count += add_dwarf_argspec(opts->patt_type, opts->args, args);
+
+	if (opts->retval)
+		count += add_dwarf_argspec(opts->patt_type, opts->retval, rets);
+
+	if (opts->trigger) {
+		char *argspec = NULL;
+		char *retspec = NULL;
+
+		extract_trigger_args(&argspec, &retspec, opts->trigger);
+
+		if (argspec) {
+			count += add_dwarf_argspec(opts->patt_type,
+						   argspec, args);
+			free(argspec);
+		}
+
+		if (retspec) {
+			count += add_dwarf_argspec(opts->patt_type,
+						   retspec, rets);
+			free(retspec);
+		}
+	}
+
+	return count;
+}
+
+static void save_debug_info(struct opts *opts)
+{
+	struct dirent **sym_list;
+	int i, syms;
+	unsigned s;
+	LIST_HEAD(args);
+	LIST_HEAD(rets);
+	struct dwarf_arg_pattern *p;
+
+	if (!build_dwarf_argspec(opts, &args, &rets))
+		return;
+
+	syms = scandir(opts->dirname, &sym_list, filter_sym, alphasort);
+	if (syms <= 0)
+		pr_err("cannot find sym files");
+
+	pr_dbg("saving debug info\n");
+
+	for (i = 0; i < syms; i++) {
+		struct debug_info dinfo = {};
+		struct symtabs symtabs = {
+			.flags = SYMTAB_FL_USE_SYMFILE |
+				 SYMTAB_FL_SKIP_NORMAL |
+				 SYMTAB_FL_SKIP_DYNAMIC,
+		};
+		char *filename = sym_list[i]->d_name;
+		int len = strlen(filename);
+		FILE *fp = NULL;
+
+		/* restore original file name */
+		filename[len - 4] = '\0';
+
+		if (setup_debug_info(filename, &dinfo, 0) < 0)
+			goto next;
+
+		load_symtabs(&symtabs, opts->dirname, filename);
+
+		if (!symtabs.symtab.nr_sym)
+			goto next;
+
+		fp = create_debug_file(opts->dirname, filename);
+
+		for (s = 0; s < symtabs.symtab.nr_sym; s++) {
+			struct sym *sym = &symtabs.symtab.sym[s];
+			char *spec;
+
+			list_for_each_entry(p, &args, list) {
+				if (!match_filter_pattern(&p->patt, sym->name))
+					continue;
+
+				spec = get_dwarf_argspec(&dinfo, sym->name,
+							 sym->addr);
+				save_debug_file(fp, sym->addr, sym->name, spec,
+						false);
+			}
+
+			list_for_each_entry(p, &rets, list) {
+				if (!match_filter_pattern(&p->patt, sym->name))
+					continue;
+
+				spec = get_dwarf_retspec(&dinfo, sym->name,
+							 sym->addr);
+				save_debug_file(fp, sym->addr, sym->name, spec,
+						true);
+			}
+		}
+
+		close_debug_file(fp, opts->dirname, filename);
+
+next:
+		release_debug_info(&dinfo);
+		unload_symtabs(&symtabs);
+		free(sym_list[i]);
+	}
+
+	free(sym_list);
+
+	while (!list_empty(&args)) {
+		p = list_first_entry(&args, typeof(*p), list);
+		list_del(&p->list);
+
+		free_filter_pattern(&p->patt);
+		free(p);
+	}
+
+	while (!list_empty(&rets)) {
+		p = list_first_entry(&rets, typeof(*p), list);
+		list_del(&p->list);
+
+		free_filter_pattern(&p->patt);
+		free(p);
+	}
+}
+
 static char *get_child_time(struct timespec *ts1, struct timespec *ts2)
 {
 #define SEC_TO_NSEC  (1000000000ULL)
@@ -1824,6 +1982,7 @@ int do_main_loop(int pfd[2], int ready, struct opts *opts, int pid)
 	finish_writers(&wd, opts);
 
 	write_symbol_files(&wd, opts);
+	save_debug_info(opts);
 	return ret;
 }
 
