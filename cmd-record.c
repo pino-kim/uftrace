@@ -1321,6 +1321,153 @@ static void save_session_symbols(struct opts *opts)
 	free(map_list);
 }
 
+/* find args which doesn't have user-given spec */
+static bool build_dwarf_argspec(struct opts *opts, struct strv *args,
+				struct strv *rets)
+{
+	struct strv strv = INIT_STRV;
+	char *str;
+	int i;
+
+	if (opts->args) {
+		strv_split(&strv, opts->args, ";");
+
+		strv_for_each(&strv, str, i) {
+			if (!strchr(str, '@'))
+				strv_append(args, str);
+		}
+		strv_free(&strv);
+	}
+
+	if (opts->retval) {
+		strv_split(&strv, opts->retval, ";");
+
+		strv_for_each(&strv, str, i) {
+			if (!strchr(str, '@'))
+				strv_append(rets, str);
+		}
+		strv_free(&strv);
+	}
+
+	/* TODO: extrace trigger */
+
+	return args->nr || rets->nr;
+}
+
+static FILE * create_debug_file(char *dirname, char *filename)
+{
+	FILE *fp;
+	char *tmp;
+
+	xasprintf(&tmp, "%s/%s.dbg", dirname, filename);
+
+	fp = fopen(tmp, "a");
+
+	free(tmp);
+	return fp;
+}
+
+static void close_debug_file(FILE *fp, char *dirname, char *filename)
+{
+	bool delete = !ftell(fp);
+	char *tmp;
+
+	fclose(fp);
+
+	if (!delete)
+		return;
+
+	pr_dbg("delete empty debug file for %s\n", filename);
+
+	xasprintf(&tmp, "%s/%s.dbg", dirname, filename);
+	unlink(tmp);
+	free(tmp);
+}
+
+static void save_debug_file(FILE *fp, char *name, char *spec, bool retval)
+{
+	char prefix = retval ? 'R' : 'A';
+
+	fprintf(fp, "%c: %s%s\n", prefix, name, spec);
+}
+
+static void save_debug_info(struct opts *opts)
+{
+	struct dirent **sym_list;
+	int i, syms;
+	unsigned s;
+	struct strv args = INIT_STRV;
+	struct strv rets = INIT_STRV;
+
+	if (!build_dwarf_argspec(opts, &args, &rets))
+		return;
+
+	syms = scandir(opts->dirname, &sym_list, filter_sym, alphasort);
+	if (syms <= 0)
+		pr_err("cannot find sym files");
+
+	pr_dbg("saving debug info\n");
+
+	for (i = 0; i < syms; i++) {
+		struct debug_info dinfo = {};
+		struct symtabs symtabs = {
+			.flags = SYMTAB_FL_USE_SYMFILE |
+				 SYMTAB_FL_SKIP_NORMAL |
+				 SYMTAB_FL_SKIP_DYNAMIC,
+		};
+		char *filename = sym_list[i]->d_name;
+		int len = strlen(filename);
+		FILE *fp = NULL;
+
+		/* restore original file name */
+		filename[len - 4] = '\0';
+
+		if (setup_debug_info(filename, &dinfo, 0) < 0)
+			goto next;
+
+		load_symtabs(&symtabs, opts->dirname, filename);
+
+		if (!symtabs.symtab.nr_sym)
+			goto next;
+
+		fp = create_debug_file(opts->dirname, filename);
+
+		for (s = 0; s < symtabs.symtab.nr_sym; s++) {
+			struct sym *sym = &symtabs.symtab.sym[s];
+			char *str, *spec;
+
+			strv_for_each(&args, str, i) {
+				if (fnmatch(str, sym->name, 0))
+					continue;
+
+				spec = get_dwarf_argspec(&dinfo, sym->name,
+							 sym->addr);
+				save_debug_file(fp, sym->name, spec, false);
+			}
+
+			strv_for_each(&rets, str, i) {
+				if (fnmatch(str, sym->name, 0))
+					continue;
+
+				spec = get_dwarf_retspec(&dinfo, sym->name,
+							 sym->addr);
+				save_debug_file(fp, sym->name, spec, true);
+			}
+		}
+
+		close_debug_file(fp, opts->dirname, filename);
+
+next:
+		release_debug_info(&dinfo);
+		unload_symtabs(&symtabs);
+		free(sym_list[i]);
+	}
+
+	free(sym_list);
+	strv_free(&args);
+	strv_free(&rets);
+}
+
 static bool child_exited;
 
 static void sigchld_handler(int sig, siginfo_t *sainfo, void *context)
@@ -1807,6 +1954,7 @@ int do_main_loop(int pfd[2], int ready, struct opts *opts, int pid)
 	finish_writers(&wd, opts);
 
 	write_symbol_files(&wd, opts);
+	save_debug_info(opts);
 	return ret;
 }
 

@@ -23,7 +23,7 @@ int setup_debug_info(const char *filename, struct debug_info *dinfo,
 
 	fd = open(filename, O_RDONLY);
 	if (fd < 0) {
-		pr_dbg("cannot open debug info for %s: %m", filename);
+		pr_dbg2("cannot open debug info for %s: %m\n", filename);
 		return -1;
 	}
 
@@ -31,8 +31,8 @@ int setup_debug_info(const char *filename, struct debug_info *dinfo,
 	close(fd);
 
 	if (dinfo->dw == NULL) {
-		pr_dbg("failed to setup debug info: %s\n",
-		       dwarf_errmsg(dwarf_errno()));
+		pr_dbg2("failed to setup debug info: %s\n",
+			dwarf_errmsg(dwarf_errno()));
 		return -1;
 	}
 
