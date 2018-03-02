@@ -14,6 +14,58 @@
 #include "utils/symbol.h"
 #include "utils/filter.h"
 
+FILE * create_debug_file(char *dirname, char *filename)
+{
+	FILE *fp;
+	char *tmp;
+
+	xasprintf(&tmp, "%s/%s.dbg", dirname, filename);
+
+	fp = fopen(tmp, "a");
+
+	free(tmp);
+	return fp;
+}
+
+void close_debug_file(FILE *fp, char *dirname, char *filename)
+{
+	bool delete = !ftell(fp);
+	char *tmp;
+
+	fclose(fp);
+
+	if (!delete)
+		return;
+
+	pr_dbg2("delete empty debug file for %s\n", filename);
+
+	xasprintf(&tmp, "%s/%s.dbg", dirname, filename);
+	unlink(tmp);
+	free(tmp);
+}
+
+void save_debug_file(FILE *fp, char code, char *str, unsigned long val)
+{
+	fprintf(fp, "%c: ", code);
+
+	switch (code) {
+	case 'F':
+		fprintf(fp, "%#lx %s\n", val, str);
+		break;
+	case 'A':
+	case 'R':
+		fprintf(fp, "%s\n", str);
+		break;
+	case 'E':
+		/* this format is compatible with parse_enum_string() */
+		fprintf(fp, "enum %s {%s}\n", str, (char *)val);
+		break;
+	default:
+		fprintf(fp, "unknown debug info\n");
+		break;
+	}
+}
+
 /* setup debug info from filename, return 0 for success */
 int setup_debug_info(const char *filename, struct debug_info *dinfo,
 		     unsigned long offset)
@@ -23,7 +75,7 @@ int setup_debug_info(const char *filename, struct debug_info *dinfo,
 
 	fd = open(filename, O_RDONLY);
 	if (fd < 0) {
-		pr_dbg("cannot open debug info for %s: %m", filename);
+		pr_dbg2("cannot open debug info for %s: %m\n", filename);
 		return -1;
 	}
 
@@ -31,8 +83,8 @@ int setup_debug_info(const char *filename, struct debug_info *dinfo,
 	close(fd);
 
 	if (dinfo->dw == NULL) {
-		pr_dbg("failed to setup debug info: %s\n",
-		       dwarf_errmsg(dwarf_errno()));
+		pr_dbg2("failed to setup debug info: %s\n",
+			dwarf_errmsg(dwarf_errno()));
 		return -1;
 	}
 

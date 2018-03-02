@@ -710,8 +710,7 @@ void save_enum_def(struct rb_root *root, FILE *fp)
 		e_def = rb_entry(node, struct enum_def, node);
 
 		str = get_enum_def_string(e_def);
-		/* this format is compatible with parse_enum_string() */
-		fprintf(fp, "E: enum %s {%s}\n", e_def->name, str);
+		save_debug_file(fp, 'E', e_def->name, (unsigned long)str);
 		free(str);
 
 		node = rb_next(node);
