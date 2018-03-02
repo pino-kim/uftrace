@@ -1335,10 +1335,167 @@ static void send_event_file(int sock, const char *dirname)
 	send_trace_metadata(sock, dirname, "events.txt");
 }
 
+struct dwarf_arg_pattern {
+	struct uftrace_pattern patt;
+	struct list_head list;
+};
+
+static int add_dwarf_argspec(enum uftrace_pattern_type ptype, char *spec,
+			     struct list_head *head)
+{
+	struct dwarf_arg_pattern *argp;
+	struct strv strv = STRV_INIT;
+	char *str;
+	int i;
+	int count = 0;
+
+	strv_split(&strv, spec, ";");
+
+	strv_for_each(&strv, str, i) {
+		if (strchr(str, '@'))
+			continue;
+
+		argp = xmalloc(sizeof(*argp));
+		init_filter_pattern(ptype, &argp->patt, str);
+		list_add_tail(&argp->list, head);
+		count++;
+	}
+	strv_free(&strv);
+
+	return count;
+}
+
+/* find args which doesn't have user-given spec */
+static bool build_dwarf_argspec(struct opts *opts, struct list_head *args,
+				struct list_head *rets)
+{
+	int count = 0;
+
+	if (opts->args)
+		count += add_dwarf_argspec(opts->patt_type, opts->args, args);
+
+	if (opts->retval)
+		count += add_dwarf_argspec(opts->patt_type, opts->retval, rets);
+
+	if (opts->trigger) {
+		char *argspec = NULL;
+		char *retspec = NULL;
+
+		extract_trigger_args(&argspec, &retspec, opts->trigger);
+
+		if (argspec) {
+			count += add_dwarf_argspec(opts->patt_type,
+						   argspec, args);
+			free(argspec);
+		}
+
+		if (retspec) {
+			count += add_dwarf_argspec(opts->patt_type,
+						   retspec, rets);
+			free(retspec);
+		}
+	}
+
+	return count;
+}
+
+static void delete_dwarf_argspec(struct list_head *args)
+{
+	struct dwarf_arg_pattern *p;
+
+	while (!list_empty(args)) {
+		p = list_first_entry(args, typeof(*p), list);
+		list_del(&p->list);
+
+		free_filter_pattern(&p->patt);
+		free(p);
+	}
+}
+
+static void save_debug_info(struct symtabs *symtabs, struct list_head *pargs,
+			    struct list_head *prets)
+{
+	unsigned s;
+	struct uftrace_mmap *map;
+	struct dwarf_arg_pattern *p;
+
+	map = symtabs->maps;
+	while (map) {
+		char *filename = map->libname;
+		unsigned long offset = map->start;
+		FILE *fp;
+
+		fp = create_debug_file(symtabs->dirname, basename(filename));
+		if (fp == NULL)
+			goto next;
+
+		if (setup_debug_info(filename, &map->dinfo, offset) < 0)
+			goto next;
+
+		pr_dbg2("save debug info for %s\n", basename(filename));
+
+		for (s = 0; s < map->symtab.nr_sym; s++) {
+			struct sym *sym = &map->symtab.sym[s];
+			char *symname;
+			bool found_arg = false;
+			char *spec;
+
+			/* ignore dynamic symbols for now */
+			if (sym->type == ST_PLT)
+				continue;
+
+			symname = demangle(sym->name);
+			list_for_each_entry(p, pargs, list) {
+				if (!match_filter_pattern(&p->patt, symname))
+					continue;
+
+				spec = get_dwarf_argspec(&map->dinfo, sym->name,
+							 sym->addr);
+				if (spec) {
+					save_debug_file(fp, 'F', sym->name,
+							sym->addr - offset);
+					save_debug_file(fp, 'A', spec, 0);
+					found_arg = true;
+				}
+				break;
+			}
+
+			list_for_each_entry(p, prets, list) {
+				if (!match_filter_pattern(&p->patt, symname))
+					continue;
+
+				spec = get_dwarf_retspec(&map->dinfo, sym->name,
+							 sym->addr);
+				if (spec) {
+					if (!found_arg) {
+						save_debug_file(fp, 'F',
+							sym->name,
+							sym->addr - offset);
+					}
+					save_debug_file(fp, 'R', spec, 0);
+				}
+				break;
+			}
+			free(symname);
+		}
+
+next:
+		if (fp)
+			close_debug_file(fp, symtabs->dirname, filename);
+		release_debug_info(&map->dinfo);
+
+		map = map->next;
+	}
+}
+
 static void save_session_symbols(struct opts *opts)
 {
 	struct dirent **map_list;
+	LIST_HEAD(args);
+	LIST_HEAD(rets);
 	int i, maps;
+
+	build_dwarf_argspec(opts, &args, &rets);
 
 	maps = scandir(opts->dirname, &map_list, filter_map, alphasort);
 	if (maps <= 0)
@@ -1349,7 +1506,6 @@ static void save_session_symbols(struct opts *opts)
 			.dirname  = opts->dirname,
 			.flags    = SYMTAB_FL_ADJ_OFFSET,
 		};
-		struct uftrace_mmap *map, *tmp;
 		char sid[20] = { 0, };
 
 		if (sid[0] == '\0')
@@ -1359,22 +1515,17 @@ static void save_session_symbols(struct opts *opts)
 		pr_dbg2("reading symbols for session %s\n", sid);
 		read_session_map(opts->dirname, &symtabs, sid);
 
-		/* shared libraries */
 		load_module_symtabs(&symtabs);
 		save_module_symtabs(&symtabs);
+		save_debug_info(&symtabs, &args, &rets);
 
-		map = symtabs.maps;
-		while (map) {
-			tmp = map;
-			map = map->next;
-
-			free(tmp);
-		}
-		symtabs.maps = NULL;
-
+		delete_session_map(&symtabs);
 		unload_symtabs(&symtabs);
 	}
+
 	free(map_list);
+	delete_dwarf_argspec(&args);
+	delete_dwarf_argspec(&rets);
 }
 
 static char *get_child_time(struct timespec *ts1, struct timespec *ts2)
