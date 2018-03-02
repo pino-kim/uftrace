@@ -1380,6 +1380,248 @@ static void save_session_symbols(struct opts *opts)
 	free(map_list);
 }
 
+struct dwarf_arg_pattern {
+	struct uftrace_pattern patt;
+	struct list_head list;
+};
+
+static int add_dwarf_argspec(enum uftrace_pattern_type ptype, char *spec,
+			     struct list_head *head)
+{
+	struct dwarf_arg_pattern *argp;
+	struct strv strv = STRV_INIT;
+	char *str;
+	int i;
+	int count = 0;
+
+	strv_split(&strv, spec, ";");
+
+	strv_for_each(&strv, str, i) {
+		if (strchr(str, '@'))
+			continue;
+
+		argp = xmalloc(sizeof(*argp));
+		init_filter_pattern(ptype, &argp->patt, str);
+		list_add_tail(&argp->list, head);
+		count++;
+	}
+	strv_free(&strv);
+
+	return count;
+}
+
+/* find args which doesn't have user-given spec */
+static bool build_dwarf_argspec(struct opts *opts, struct list_head *args,
+				struct list_head *rets)
+{
+	int count = 0;
+
+	if (opts->args)
+		count += add_dwarf_argspec(opts->patt_type, opts->args, args);
+
+	if (opts->retval)
+		count += add_dwarf_argspec(opts->patt_type, opts->retval, rets);
+
+	if (opts->trigger) {
+		char *argspec = NULL;
+		char *retspec = NULL;
+
+		extract_trigger_args(&argspec, &retspec, opts->trigger);
+
+		if (argspec) {
+			count += add_dwarf_argspec(opts->patt_type,
+						   argspec, args);
+			free(argspec);
+		}
+
+		if (retspec) {
+			count += add_dwarf_argspec(opts->patt_type,
+						   retspec, rets);
+			free(retspec);
+		}
+	}
+
+	return count;
+}
+
+static char * find_fullpath(char *dirname, char *filename,
+			    struct symtabs *symtabs,
+			    struct dirent **map_list, int num)
+{
+	struct uftrace_mmap *map;
+	char sid[20] = { 0, };
+	int i;
+
+	/* try to use the last map */
+	map = find_map_by_name(symtabs, filename);
+	if (map)
+		return map->libname;
+
+	delete_session_map(symtabs);
+
+	for (i = 0; i < num; i++) {
+		/* skip last map we checked above */
+		if (!strcmp(map_list[i]->d_name, symtabs->filename))
+			continue;
+
+		sscanf(map_list[i]->d_name, "sid-%[^.].map", sid);
+		read_session_map(dirname, symtabs, sid);
+
+		map = find_map_by_name(symtabs, filename);
+		if (map) {
+			symtabs->filename = map_list[i]->d_name;
+			return map->libname;
+		}
+
+		delete_session_map(symtabs);
+	}
+
+	/* not found, use the given name */
+	symtabs->filename = "";
+	return filename;
+}
+
+static void save_debug_info(struct opts *opts)
+{
+	struct dirent **sym_list;
+	struct dirent **map_list;
+	int i, syms, maps;
+	unsigned s;
+	LIST_HEAD(args);
+	LIST_HEAD(rets);
+	struct dwarf_arg_pattern *p;
+
+	if (!build_dwarf_argspec(opts, &args, &rets))
+		return;
+
+	maps = scandir(opts->dirname, &map_list, filter_map, alphasort);
+	if (maps <= 0)
+		pr_err("cannot find map files");
+
+	syms = scandir(opts->dirname, &sym_list, filter_sym, alphasort);
+	if (syms <= 0)
+		pr_err("cannot find sym files");
+
+	pr_dbg("saving debug info\n");
+
+	for (i = 0; i < syms; i++) {
+		struct debug_info dinfo = {};
+		struct symtabs symtabs = {
+			.flags = SYMTAB_FL_USE_SYMFILE |
+				 SYMTAB_FL_SKIP_NORMAL |
+				 SYMTAB_FL_SKIP_DYNAMIC,
+			.filename = "",
+		};
+		char *filename = sym_list[i]->d_name;
+		char *fullpath;
+		int len = strlen(filename);
+		FILE *fp = NULL;
+
+		/* restore original file name */
+		filename[len - 4] = '\0';
+
+		/* we need a full pathname to get the debug info */
+		fullpath = find_fullpath(opts->dirname, filename, &symtabs,
+					 map_list, maps);
+
+		if (setup_debug_info(fullpath, &dinfo, 0) < 0)
+			goto next;
+
+		/*
+		 * get_dwarf_{arg,ret}spec() below uses symbol address
+		 * to find out the debug info of a function.  But it
+		 * requires a relative address (= file offset) to be
+		 * used by multiple sessions.  The symtabs already has
+		 * relative addresses now so it's mostly okay but it's
+		 * a problem for executbles which requires an absolute
+		 * address.
+		 *
+		 * As get_dwarf_{arg,ret}spec() subtracts dinfo.offset
+		 * from the symbol address, we can add minus offset
+		 * in case of executable to work around it.
+		 */
+		if (is_elf_executable(fullpath)) {
+			struct uftrace_mmap *map;
+
+			map = find_map_by_name(&symtabs, filename);
+			if (map)
+				dinfo.offset -= map->start;
+		}
+
+		if (demangler != DEMANGLE_NONE)
+			symtabs.flags |= SYMTAB_FL_DEMANGLE;
+
+		load_symtabs(&symtabs, opts->dirname, filename);
+
+		if (!symtabs.symtab.nr_sym)
+			goto next;
+
+		fp = create_debug_file(opts->dirname, filename);
+
+		for (s = 0; s < symtabs.symtab.nr_sym; s++) {
+			struct sym *sym = &symtabs.symtab.sym[s];
+			char *spec;
+
+			list_for_each_entry(p, &args, list) {
+				if (!match_filter_pattern(&p->patt, sym->name))
+					continue;
+
+				/* it'll use (sym->addr - dinfo.offset) */
+				spec = get_dwarf_argspec(&dinfo, sym->name,
+							 sym->addr);
+				if (spec == NULL)
+					continue;
+
+				/* but we need to save it with sym->addr only */
+				save_debug_file(fp, sym->addr, sym->name, spec,
+						false);
+			}
+
+			list_for_each_entry(p, &rets, list) {
+				if (!match_filter_pattern(&p->patt, sym->name))
+					continue;
+
+				/* it'll use (sym->addr - dinfo.offset) */
+				spec = get_dwarf_retspec(&dinfo, sym->name,
+							 sym->addr);
+				if (spec == NULL)
+					continue;
+
+				/* but we need to save it with sym->addr only */
+				save_debug_file(fp, sym->addr, sym->name, spec,
+						true);
+			}
+		}
+
+		save_enum_def(&dwarf_enum, fp);
+		close_debug_file(fp, opts->dirname, filename);
+
+next:
+		release_enum_def(&dwarf_enum);
+		release_debug_info(&dinfo);
+		unload_symtabs(&symtabs);
+		free(sym_list[i]);
+	}
+
+	free(sym_list);
+
+	while (!list_empty(&args)) {
+		p = list_first_entry(&args, typeof(*p), list);
+		list_del(&p->list);
+
+		free_filter_pattern(&p->patt);
+		free(p);
+	}
+
+	while (!list_empty(&rets)) {
+		p = list_first_entry(&rets, typeof(*p), list);
+		list_del(&p->list);
+
+		free_filter_pattern(&p->patt);
+		free(p);
+	}
+}
+
 static char *get_child_time(struct timespec *ts1, struct timespec *ts2)
 {
 #define SEC_TO_NSEC  (1000000000ULL)
@@ -1863,6 +2105,7 @@ int do_main_loop(int pfd[2], int ready, struct opts *opts, int pid)
 	finish_writers(&wd, opts);
 
 	write_symbol_files(&wd, opts);
+	save_debug_info(opts);
 	return ret;
 }
 

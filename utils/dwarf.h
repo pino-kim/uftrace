@@ -59,4 +59,9 @@ static inline bool debug_info_available(struct debug_info *dinfo)
 
 #endif /* HAVE_LIBDW */
 
+FILE * create_debug_file(char *dirname, char *filename);
+void close_debug_file(FILE *fp, char *dirname, char *filename);
+void save_debug_file(FILE *fp, uint32_t offset, char *name, char *spec,
+		     bool retval);
+
 #endif /* UFTRACE_DWARF_H */
