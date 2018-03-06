@@ -1524,7 +1524,7 @@ static void save_debug_info(struct opts *opts)
 		fullpath = find_fullpath(opts->dirname, filename, &symtabs,
 					 map_list, maps);
 
-		if (setup_debug_info(fullpath, &dinfo, 0) < 0)
+		if (setup_debug_info(NULL, fullpath, &dinfo, 0) < 0)
 			goto next;
 
 		/*
