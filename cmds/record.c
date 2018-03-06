@@ -1429,7 +1429,7 @@ static void save_debug_info(struct symtabs *symtabs, struct list_head *pargs,
 		if (fp == NULL)
 			goto next;
 
-		if (setup_debug_info(filename, &map->dinfo, offset) < 0)
+		if (setup_debug_info(NULL, filename, &map->dinfo, offset) < 0)
 			goto next;
 
 		pr_dbg2("save debug info for %s\n", basename(filename));
