@@ -906,13 +906,16 @@ static void prepare_debug_info(struct symtabs *symtabs)
 	if (symtabs->loaded_debug)
 		return;
 
-	setup_debug_info(symtabs->filename, &symtabs->dinfo,
-			 symtabs->maps->start);
+	if (symtabs->dirname)
+		pr_dbg("prepare debug info for %s\n", symtabs->filename);
+
+	setup_debug_info(symtabs->dirname, symtabs->filename,
+			 &symtabs->dinfo, symtabs->maps->start);
 
 	map = symtabs->maps;
 	while (map) {
-		setup_debug_info(map->libname, &map->dinfo,
-				 map->start);
+		setup_debug_info(symtabs->dirname, map->libname,
+				 &map->dinfo, map->start);
 		map = map->next;
 	}
 
