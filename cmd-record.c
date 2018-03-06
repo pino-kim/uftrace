@@ -1437,7 +1437,7 @@ static void save_debug_info(struct opts *opts)
 		/* restore original file name */
 		filename[len - 4] = '\0';
 
-		if (setup_debug_info(filename, &dinfo, 0) < 0)
+		if (setup_debug_info(NULL, filename, &dinfo, 0) < 0)
 			goto next;
 
 		load_symtabs(&symtabs, opts->dirname, filename);
