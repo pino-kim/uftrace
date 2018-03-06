@@ -58,17 +58,13 @@ void read_session_map(char *dirname, struct symtabs *symtabs, char *sid)
 
 		namelen = ALIGN(strlen(path) + 1, 4);
 
-		map = xmalloc(sizeof(*map) + namelen);
+		map = xzalloc(sizeof(*map) + namelen);
 
 		map->start = start;
 		map->end = end;
 		map->len = namelen;
-		map->next = NULL;
+
 		memcpy(map->prot, prot, 4);
-		map->symtab.sym = NULL;
-		map->symtab.sym_names = NULL;
-		map->symtab.nr_sym = 0;
-		map->symtab.nr_alloc = 0;
 		memcpy(map->libname, path, namelen);
 		map->libname[strlen(path)] = '\0';
 		last_libname = map->libname;
@@ -158,6 +154,7 @@ void create_session(struct uftrace_session_link *sessions,
 	set_kernel_base(&s->symtabs, s->sid);
 
 	load_module_symtabs(&s->symtabs);
+	load_debug_info(&s->symtabs);
 
 	if (sessions->first == NULL)
 		sessions->first = s;
