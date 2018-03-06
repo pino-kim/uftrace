@@ -1,25 +1,206 @@
-#ifdef HAVE_LIBDW
-
 #include <stdio.h>
 #include <stdbool.h>
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
-#include <libelf.h>
-#include <gelf.h>
-#include <dwarf.h>
+#include <errno.h>
 
 #include "utils/utils.h"
 #include "utils/dwarf.h"
 #include "utils/symbol.h"
 #include "utils/filter.h"
 
+struct debug_entry {
+	struct rb_node		node;
+	char			*name;
+	char			*spec;
+};
+
+static int add_debug_entry(struct rb_root *root, char *argspec)
+{
+	struct debug_entry *entry, *iter;
+	struct rb_node *parent = NULL;
+	struct rb_node **p = &root->rb_node;
+	char *pos = strchr(argspec, '@');
+
+	if (pos == NULL)
+		return -1;
+
+	*pos = '\0';
+
+	entry = xmalloc(sizeof(*entry));
+	entry->name = xstrdup(argspec);
+
+	*pos = '@';
+	/* remove trailing newline and copy */
+	entry->spec = xstrndup(pos, strlen(pos) - 1);
+
+	while (*p) {
+		parent = *p;
+		iter = rb_entry(parent, struct debug_entry, node);
+
+		if (strcmp(iter->name, entry->name) < 0)
+			p = &parent->rb_left;
+		else
+			p = &parent->rb_right;
+	}
+
+	rb_link_node(&entry->node, parent, p);
+	rb_insert_color(&entry->node, root);
+
+	return 0;
+}
+
+static struct debug_entry * find_debug_entry(struct rb_root *root, char *name)
+{
+	struct debug_entry *iter;
+	struct rb_node *parent = NULL;
+	struct rb_node **p = &root->rb_node;
+	int ret;
+
+	while (*p) {
+		parent = *p;
+		iter = rb_entry(parent, struct debug_entry, node);
+
+		ret = strcmp(iter->name, name);
+		if (ret == 0)
+			return iter;
+
+		if (ret < 0)
+			p = &parent->rb_left;
+		else
+			p = &parent->rb_right;
+	}
+
+	return NULL;
+}
+
+static void free_debug_entry(struct rb_root *root)
+{
+	struct debug_entry *entry;
+	struct rb_node *node;
+
+	while (!RB_EMPTY_ROOT(root)) {
+		node = rb_first(root);
+		entry = rb_entry(node, typeof(*entry), node);
+
+		rb_erase(node, root);
+		free(entry);
+	}
+}
+
+FILE * create_debug_file(char *dirname, char *filename)
+{
+	FILE *fp;
+	char *tmp;
+
+	xasprintf(&tmp, "%s/%s.dbg", dirname, filename);
+
+	fp = fopen(tmp, "a");
+
+	free(tmp);
+	return fp;
+}
+
+void close_debug_file(FILE *fp, char *dirname, char *filename)
+{
+	bool delete = !ftell(fp);
+	char *tmp;
+
+	fclose(fp);
+
+	if (!delete)
+		return;
+
+	pr_dbg("delete empty debug file for %s\n", filename);
+
+	xasprintf(&tmp, "%s/%s.dbg", dirname, filename);
+	unlink(tmp);
+	free(tmp);
+}
+
+void save_debug_file(FILE *fp, char *name, char *spec, bool retval)
+{
+	char prefix = retval ? 'R' : 'A';
+
+	fprintf(fp, "%c: %s%s\n", prefix, name, spec);
+}
+
+static int load_debug_file(const char *dirname, const char *filename,
+			   struct debug_info *dinfo)
+{
+	char *pathname;
+	FILE *fp;
+	char *line = NULL;
+	size_t len = 0;
+	int ret = -1;
+
+	xasprintf(&pathname, "%s/%s.dbg", dirname, basename(filename));
+
+	pr_dbg2("load debug info from %s\n", pathname);
+
+	fp = fopen(pathname, "r");
+	if (fp == NULL) {
+		if (errno == ENOENT) {
+			free(pathname);
+			return -1;
+		}
+
+		pr_err("failed to open: %s", pathname);
+	}
+
+	while (getline(&line, &len, fp) >= 0) {
+		if (line[1] != ':' || line[2] != ' ')
+			goto out;
+
+		switch (line[0]) {
+		case 'A':
+			if (add_debug_entry(&dinfo->args, &line[3]) < 0)
+				goto out;
+			break;
+		case 'R':
+			if (add_debug_entry(&dinfo->rets, &line[3]) < 0)
+				goto out;
+			break;
+		default:
+			goto out;
+		}
+	}
+	ret = 0;
+
+out:
+	if (ret < 0) {
+		pr_dbg("invalid dbg file: %s: %s\n", pathname, line);
+
+		free_debug_entry(&dinfo->args);
+		free_debug_entry(&dinfo->rets);
+	}
+
+	fclose(fp);
+	free(pathname);
+	return ret;
+}
+
+#ifdef HAVE_LIBDW
+
+#include <libelf.h>
+#include <gelf.h>
+#include <dwarf.h>
+
 /* setup debug info from filename, return 0 for success */
-int setup_debug_info(const char *filename, struct debug_info *dinfo,
-		     unsigned long offset)
+int setup_debug_info(const char *dirname, const char *filename,
+		     struct debug_info *dinfo, unsigned long offset)
 {
 	int fd;
 	GElf_Ehdr ehdr;
+
+	if (debug_info_available(dinfo))
+		return 0;
+
+	if (dirname != NULL)
+		return load_debug_file(dirname, filename, dinfo);
+
+	pr_dbg2("setup debug info for %s\n", filename);
 
 	fd = open(filename, O_RDONLY);
 	if (fd < 0) {
@@ -50,6 +231,9 @@ int setup_debug_info(const char *filename, struct debug_info *dinfo,
 
 void release_debug_info(struct debug_info *dinfo)
 {
+	free_debug_entry(&dinfo->args);
+	free_debug_entry(&dinfo->rets);
+
 	if (dinfo->dw == NULL)
 		return;
 
@@ -309,6 +493,11 @@ char * get_dwarf_argspec(struct debug_info *dinfo, char *name, unsigned long add
 	struct arg_data ad = {
 		.name = name,
 	};
+	struct debug_entry *entry;
+
+	entry = find_debug_entry(&dinfo->args, name);
+	if (entry)
+		return entry->spec;
 
 	if (dinfo->dw == NULL)
 		return NULL;
@@ -329,6 +518,11 @@ char * get_dwarf_retspec(struct debug_info *dinfo, char *name, unsigned long add
 	struct arg_data ad = {
 		.name = name,
 	};
+	struct debug_entry *entry;
+
+	entry = find_debug_entry(&dinfo->rets, name);
+	if (entry)
+		return entry->spec;
 
 	if (dinfo->dw == NULL)
 		return NULL;
@@ -341,6 +535,40 @@ char * get_dwarf_retspec(struct debug_info *dinfo, char *name, unsigned long add
 
 	dwarf_getfuncs(&cudie, get_retspec_cb, &ad, 0);
 	return ad.argspec;
+}
+
+#else  /* !HAVE_LIBDW */
+
+int setup_debug_info(const char *dirname, const char *filename,
+		     struct debug_info *dinfo, unsigned long offset)
+{
+	dinfo->args = RB_ROOT;
+	dinfo->rets = RB_ROOT;
+
+	if (dirname != NULL)
+		return load_debug_file(dirname, filename, dinfo);
+
+	return -1;
+}
+
+void release_debug_info(struct debug_info *dinfo)
+{
+	free_debug_entry(&dinfo->args);
+	free_debug_entry(&dinfo->rets);
+}
+
+char * get_dwarf_argspec(struct debug_info *dinfo, char *name, unsigned long addr)
+{
+	struct debug_entry *entry = find_debug_entry(&dinfo->args, name);
+
+	return entry ? entry->spec : NULL;
+}
+
+char * get_dwarf_retspec(struct debug_info *dinfo, char *name, unsigned long addr)
+{
+	struct debug_entry *entry = find_debug_entry(&dinfo->rets, name);
+
+	return entry ? entry->spec : NULL;
 }
 
 #endif /* HAVE_LIBDW */

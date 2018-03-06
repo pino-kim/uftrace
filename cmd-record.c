@@ -1354,43 +1354,6 @@ static bool build_dwarf_argspec(struct opts *opts, struct strv *args,
 	return args->nr || rets->nr;
 }
 
-static FILE * create_debug_file(char *dirname, char *filename)
-{
-	FILE *fp;
-	char *tmp;
-
-	xasprintf(&tmp, "%s/%s.dbg", dirname, filename);
-
-	fp = fopen(tmp, "a");
-
-	free(tmp);
-	return fp;
-}
-
-static void close_debug_file(FILE *fp, char *dirname, char *filename)
-{
-	bool delete = !ftell(fp);
-	char *tmp;
-
-	fclose(fp);
-
-	if (!delete)
-		return;
-
-	pr_dbg("delete empty debug file for %s\n", filename);
-
-	xasprintf(&tmp, "%s/%s.dbg", dirname, filename);
-	unlink(tmp);
-	free(tmp);
-}
-
-static void save_debug_file(FILE *fp, char *name, char *spec, bool retval)
-{
-	char prefix = retval ? 'R' : 'A';
-
-	fprintf(fp, "%c: %s%s\n", prefix, name, spec);
-}
-
 static void save_debug_info(struct opts *opts)
 {
 	struct dirent **sym_list;
@@ -1422,7 +1385,7 @@ static void save_debug_info(struct opts *opts)
 		/* restore original file name */
 		filename[len - 4] = '\0';
 
-		if (setup_debug_info(filename, &dinfo, 0) < 0)
+		if (setup_debug_info(NULL, filename, &dinfo, 0) < 0)
 			goto next;
 
 		load_symtabs(&symtabs, opts->dirname, filename);
