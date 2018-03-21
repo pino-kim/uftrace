@@ -217,6 +217,7 @@ static int arg_type_cb(Dwarf_Attribute *attr, void *arg)
 
 struct arg_data {
 	const char	*name;
+	uint32_t	addr;
 	char		*argspec;
 	int		idx;
 	int		fpidx;
@@ -251,12 +252,18 @@ static void add_type_info(char *spec, size_t len, Dwarf_Die *die, void *arg)
 	}
 }
 
+/* return true only if die matches to the arg_data */
+static bool check_func_die(Dwarf_Die *die, struct arg_data *ad)
+{
+	return dwarf_haspc(die, ad->addr) == 1;
+}
+
 static int get_argspec_cb(Dwarf_Die *die, void *data)
 {
 	struct arg_data *ad = data;
 	Dwarf_Die arg;
 
-	if (strcmp(dwarf_diename(die), ad->name))
+	if (!check_func_die(die, ad))
 		return DWARF_CB_OK;
 
 	pr_dbg2("found '%s' function for argspec\n", ad->name);
@@ -289,7 +296,7 @@ static int get_retspec_cb(Dwarf_Die *die, void *data)
 	struct arg_data *ad = data;
 	char buf[256];
 
-	if (strcmp(dwarf_diename(die), ad->name))
+	if (!check_func_die(die, ad))
 		return DWARF_CB_OK;
 
 	pr_dbg2("found '%s' function for retspec\n", ad->name);
@@ -308,14 +315,14 @@ char * get_dwarf_argspec(struct debug_info *dinfo, char *name, uint64_t addr)
 	Dwarf_Die cudie;
 	struct arg_data ad = {
 		.name = name,
+		.addr = addr - dinfo->offset,
 	};
 
 	if (dinfo->dw == NULL)
 		return NULL;
 
-	if (dwarf_addrdie(dinfo->dw, addr - dinfo->offset, &cudie) == NULL) {
-		pr_dbg2("no DWARF info found for %s (%lx)\n",
-			name, addr - dinfo->offset);
+	if (dwarf_addrdie(dinfo->dw, ad.addr, &cudie) == NULL) {
+		pr_dbg2("no DWARF info found for %s (%lx)\n", name, ad.addr);
 		return NULL;
 	}
 
@@ -328,14 +335,14 @@ char * get_dwarf_retspec(struct debug_info *dinfo, char *name, uint64_t addr)
 	Dwarf_Die cudie;
 	struct arg_data ad = {
 		.name = name,
+		.addr = addr - dinfo->offset,
 	};
 
 	if (dinfo->dw == NULL)
 		return NULL;
 
-	if (dwarf_addrdie(dinfo->dw, addr - dinfo->offset, &cudie) == NULL) {
-		pr_dbg2("no DWARF info found for %s (%lx)\n",
-			name, addr - dinfo->offset);
+	if (dwarf_addrdie(dinfo->dw, ad.addr, &cudie) == NULL) {
+		pr_dbg2("no DWARF info found for %s (%lx)\n", name, ad.addr);
 		return NULL;
 	}
 
