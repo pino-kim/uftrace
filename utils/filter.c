@@ -144,11 +144,13 @@ static void add_arg_spec(struct list_head *arg_list, struct uftrace_arg_spec *ar
 				found = true;
 			break;
 		case ARG_TYPE_REG:
-			if (arg->reg_idx == oarg->reg_idx)
+			if (oarg->type == ARG_TYPE_REG &&
+			    arg->reg_idx == oarg->reg_idx)
 				found = true;
 			break;
 		case ARG_TYPE_STACK:
-			if (arg->stack_ofs == oarg->stack_ofs)
+			if (oarg->type == ARG_TYPE_STACK &&
+			    arg->stack_ofs == oarg->stack_ofs)
 				found = true;
 			break;
 		}
