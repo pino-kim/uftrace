@@ -488,6 +488,93 @@ static void add_type_info(char *spec, size_t len, Dwarf_Die *die, void *arg)
 	}
 }
 
+struct location_data {
+	int		type;
+	int		reg;    // DWARF register number
+	int		offset; // stack offset
+};
+
+static int location_cb(Dwarf_Attribute *attr, void *arg)
+{
+	unsigned aname = dwarf_whatattr(attr);
+	struct location_data *ld = arg;
+	Dwarf_Op *ops = NULL;
+	size_t len = 0;
+
+	if (aname != DW_AT_location)
+		return DWARF_CB_OK;
+
+	if (dwarf_getlocation(attr, &ops, &len) == -1) {
+		Dwarf_Addr base, start, end;
+
+		/* try to get the first entry in the location list */
+		if (dwarf_getlocations(attr, 0, &base, &start, &end,
+				       &ops, &len) == -1)
+			return DWARF_CB_ABORT;
+	}
+
+	while (len--) {
+		switch (ops->atom) {
+		case DW_OP_fbreg:
+			/*
+			 * ignore minus offsets since it doesn't set the
+			 * frame-pointer yet (we're before the prologue).
+			 */
+			if ((int)ops->number >= 0) {
+				ld->type = ARG_TYPE_STACK;
+				ld->offset = DIV_ROUND_UP(ops->number,
+							  sizeof(long)) + 1;
+			}
+			break;
+
+		case DW_OP_reg0...DW_OP_reg31:
+			ld->type = ARG_TYPE_REG;
+			ld->reg = ops->atom;
+			break;
+
+		case DW_OP_regx:
+			ld->type = ARG_TYPE_REG;
+			ld->reg = ops->number;
+			break;
+		}
+	}
+
+	return DWARF_CB_ABORT;
+}
+
+__weak const char * arch_register_dwarf_name(int dwarf_reg)
+{
+	return "invalid register";
+}
+
+static void add_location(char *spec, size_t len, Dwarf_Die *die, void *arg)
+{
+	struct location_data data = {
+		.type = ARG_TYPE_INDEX,
+	};
+	char buf[32];
+	const char *reg;
+
+	dwarf_getattrs(die, location_cb, &data, 0);
+
+	switch (data.type) {
+	case ARG_TYPE_REG:
+		reg = arch_register_dwarf_name(data.reg);
+
+		if (strcmp(reg, "invalid register")) {
+			snprintf(buf, sizeof(buf), "%%%s", reg);
+			strcat(spec, buf);
+		}
+		break;
+	case ARG_TYPE_STACK:
+		snprintf(buf, sizeof(buf), "%%stack+%d", data.offset);
+		strcat(spec, buf);
+		break;
+	default:
+		break;
+	}
+}
+
 /* return true only if die matches to the arg_data */
 static bool check_func_die(Dwarf_Die *die, struct arg_data *ad)
 {
@@ -514,6 +601,7 @@ static int get_argspec_cb(Dwarf_Die *die, void *data)
 
 		snprintf(buf, sizeof(buf), "arg%d", ++ad->idx);
 		add_type_info(buf, sizeof(buf), &arg, ad);
+		add_location(buf, sizeof(buf), &arg, ad);
 
 		if (ad->argspec == NULL)
 			xasprintf(&ad->argspec, "@%s", buf);
