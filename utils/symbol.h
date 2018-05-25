@@ -113,6 +113,7 @@ void save_module_symtabs(struct symtabs *symtabs);
 void load_dlopen_symtabs(struct symtabs *symtabs, unsigned long offset,
 			 const char *filename);
 
+bool is_elf_executable(const char *filename);
 bool check_libpthread(const char *filename);
 int check_trace_functions(const char *filename);
 int check_static_binary(const char *filename);
