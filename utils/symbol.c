@@ -1885,3 +1885,26 @@ void set_kernel_base(struct symtabs *symtabs, const char *session_id)
 
 	symtabs->kernel_base = kernel_base_addr;
 }
+
+bool is_elf_executable(const char *filename)
+{
+	int fd;
+	bool ret = false;
+	Elf *elf;
+	GElf_Ehdr ehdr;
+
+	fd = open(filename, O_RDONLY);
+	if (fd < 0)
+		return false;
+
+	elf_version(EV_CURRENT);
+
+	elf = elf_begin(fd, ELF_C_READ_MMAP, NULL);
+
+	if (elf && gelf_getehdr(elf, &ehdr) && ehdr.e_type == ET_EXEC)
+		ret = true;
+
+	elf_end(elf);
+	close(fd);
+	return ret;
+}
