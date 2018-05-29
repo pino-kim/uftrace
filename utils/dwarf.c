@@ -766,7 +766,7 @@ static void close_debug_file(FILE *fp, char *dirname, const char *filename)
 	free(tmp);
 }
 
-static void save_debug_file(FILE *fp, char code, char *str, unsigned long val)
+void save_debug_file(FILE *fp, char code, char *str, unsigned long val)
 {
 	fprintf(fp, "%c: ", code);
 
@@ -777,6 +777,10 @@ static void save_debug_file(FILE *fp, char code, char *str, unsigned long val)
 	case 'A':
 	case 'R':
 		fprintf(fp, "%s\n", str);
+		break;
+	case 'E':
+		/* this format is compatible with parse_enum_string() */
+		fprintf(fp, "enum %s {%s}\n", str, (char *)val);
 		break;
 	default:
 		fprintf(fp, "unknown debug info\n");
@@ -827,6 +831,7 @@ static void save_debug_entries(struct debug_info *dinfo,
 		}
 	}
 
+	save_enum_def(&dinfo->enums, fp);
 	close_debug_file(fp, dirname, basename(filename));
 }
 
@@ -867,6 +872,7 @@ static int load_debug_file(struct debug_info *dinfo,
 
 	dinfo->args = RB_ROOT;
 	dinfo->rets = RB_ROOT;
+	dinfo->enums = RB_ROOT;
 
 	xasprintf(&pathname, "%s/%s.dbg", dirname, basename(filename));
 
@@ -909,6 +915,10 @@ static int load_debug_file(struct debug_info *dinfo,
 				root = &dinfo->rets;
 
 			if (add_debug_entry(root, func, offset, &line[3]) < 0)
+				goto out;
+			break;
+		case 'E':
+			if (parse_enum_string(&line[3], &dinfo->enums))
 				goto out;
 			break;
 		default:
