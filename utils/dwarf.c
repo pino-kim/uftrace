@@ -137,6 +137,10 @@ void save_debug_file(FILE *fp, char code, char *str, unsigned long val)
 	case 'R':
 		fprintf(fp, "%s\n", str);
 		break;
+	case 'E':
+		/* this format is compatible with parse_enum_string() */
+		fprintf(fp, "enum %s {%s}\n", str, (char *)val);
+		break;
 	default:
 		fprintf(fp, "unknown debug info\n");
 		break;
@@ -193,6 +197,10 @@ static int load_debug_file(const char *dirname, const char *filename,
 				root = &dinfo->rets;
 
 			if (add_debug_entry(root, func, offset, &line[3]) < 0)
+				goto out;
+			break;
+		case 'E':
+			if (parse_enum_string(&line[3], &dwarf_enum))
 				goto out;
 			break;
 		default:

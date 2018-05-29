@@ -1479,10 +1479,13 @@ static void save_debug_info(struct symtabs *symtabs, struct list_head *pargs,
 			free(symname);
 		}
 
+		save_enum_def(&dwarf_enum, fp);
+
 next:
 		if (fp)
 			close_debug_file(fp, symtabs->dirname, filename);
 		release_debug_info(&map->dinfo);
+		release_enum_def(&dwarf_enum);
 
 		map = map->next;
 	}
