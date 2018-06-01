@@ -241,6 +241,9 @@ int setup_debug_info(const char *dirname, const char *filename,
 		return load_debug_file(dirname, filename, dinfo);
 	}
 
+	if (!check_trace_functions(filename))
+		return 0;
+
 	pr_dbg2("setup debug info for %s\n", filename);
 
 	fd = open(filename, O_RDONLY);
