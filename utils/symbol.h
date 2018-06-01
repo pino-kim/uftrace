@@ -75,6 +75,7 @@ struct symtabs {
 	struct symtab dsymtab;
 	struct debug_info dinfo;
 	uint64_t kernel_base;
+	uint64_t exec_base;
 	struct uftrace_mmap *maps;
 };
 

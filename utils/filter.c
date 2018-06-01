@@ -885,7 +885,7 @@ static void prepare_debug_info(struct symtabs *symtabs)
 		pr_dbg("prepare debug info for %s\n", symtabs->filename);
 
 	setup_debug_info(symtabs->dirname, symtabs->filename,
-			 &symtabs->dinfo, symtabs->maps->start);
+			 &symtabs->dinfo, symtabs->exec_base);
 
 	map = symtabs->maps;
 	while (map) {
