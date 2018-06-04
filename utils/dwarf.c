@@ -614,6 +614,47 @@ static bool check_func_die(Dwarf_Die *die, struct arg_data *ad)
 	return dwarf_haspc(die, ad->addr) == 1;
 }
 
+static bool get_cu_die(struct debug_info *dinfo, struct arg_data *ad,
+		       Dwarf_Die *cudie)
+{
+	Dwarf_Off curr = dinfo->last_addr;
+	Dwarf_Off next = 0;
+	size_t header_sz = 0;
+
+	if (dwarf_addrdie(dinfo->dw, ad->addr, cudie))
+		return true;
+
+	/*
+	 * clang/LLVM seems not to generate .debug_arange section
+	 * which is required by dwarf_addrdie()
+	 */
+	while (dwarf_nextcu(dinfo->dw, curr, &next,
+			    &header_sz, NULL, NULL, NULL) == 0) {
+		Dwarf_Die *d;
+		Dwarf_Addr low = 0;
+
+		d = dwarf_offdie(dinfo->dw, curr + header_sz, cudie);
+		if (d == NULL)
+			break;
+
+		if (dwarf_tag(cudie) != DW_TAG_compile_unit)
+			break;
+
+		if (dwarf_haspc(cudie, ad->addr) == 1) {
+			dinfo->last_addr = curr;
+			return true;
+		}
+
+		if (dwarf_lowpc(cudie, &low) == 0 && low > ad->addr)
+			break;
+
+		curr = next;
+	}
+
+	pr_dbg2("no DWARF info found for %s (%#lx)\n", ad->name, ad->addr);
+	return false;
+}
+
 static int get_argspec_cb(Dwarf_Die *die, void *data)
 {
 	struct arg_data *ad = data;
@@ -697,10 +738,8 @@ char * get_dwarf_argspec(struct debug_info *dinfo, char *name, uint64_t addr)
 	if (dinfo->dw == NULL)
 		return NULL;
 
-	if (dwarf_addrdie(dinfo->dw, ad.addr, &cudie) == NULL) {
-		pr_dbg2("no DWARF info found for %s (%lx)\n", name, ad.addr);
+	if (!get_cu_die(dinfo, &ad, &cudie))
 		return NULL;
-	}
 
 	dwarf_getfuncs(&cudie, get_argspec_cb, &ad, 0);
 	return ad.argspec;
@@ -722,10 +761,8 @@ char * get_dwarf_retspec(struct debug_info *dinfo, char *name, uint64_t addr)
 	if (dinfo->dw == NULL)
 		return NULL;
 
-	if (dwarf_addrdie(dinfo->dw, ad.addr, &cudie) == NULL) {
-		pr_dbg2("no DWARF info found for %s (%lx)\n", name, ad.addr);
+	if (!get_cu_die(dinfo, &ad, &cudie))
 		return NULL;
-	}
 
 	dwarf_getfuncs(&cudie, get_retspec_cb, &ad, 0);
 	return ad.argspec;

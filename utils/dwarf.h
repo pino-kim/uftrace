@@ -16,6 +16,7 @@
 struct debug_info {
 	Dwarf		*dw;
 	uint64_t	offset;
+	uint64_t	last_addr;
 	struct rb_root	args;
 	struct rb_root	rets;
 };
