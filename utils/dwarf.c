@@ -225,7 +225,7 @@ void prepare_debug_info(struct symtabs *symtabs)
 	if (symtabs->loaded_debug)
 		return;
 
-	pr_dbg("prepare debug info for %s\n", symtabs->filename);
+	pr_dbg("prepare debug info\n");
 
 	setup_debug_info(symtabs->filename, &symtabs->dinfo, symtabs->exec_base);
 	build_debug_info(&symtabs->dinfo);
