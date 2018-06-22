@@ -151,10 +151,10 @@ static const struct {
 	char op[2];
 	char *name;
 } ops[] = {
-	{ { 'n','w' }, "new" },
-	{ { 'n','a' }, "new[]" },
-	{ { 'd','l' }, "delete" },
-	{ { 'd','a' }, "delete[]" },
+	{ { 'n','w' }, " new" },
+	{ { 'n','a' }, " new[]" },
+	{ { 'd','l' }, " delete" },
+	{ { 'd','a' }, " delete[]" },
 	{ { 'p','s' }, "+" }, /* unary */
 	{ { 'n','g' }, "-" }, /* unary */
 	{ { 'a','d' }, "&" }, /* unary */
@@ -1198,7 +1198,7 @@ static int dd_operator_name(struct demangle_data *dd)
 		if (c0 == ops[i].op[0] && c1 == ops[i].op[1]) {
 			if (dd->newpos)
 				dd_append(dd, "::");
-			dd_append(dd, "operator ");
+			dd_append(dd, "operator");
 			dd_append(dd, ops[i].name);
 
 			dd->type++;
