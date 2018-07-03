@@ -291,7 +291,7 @@ struct mcount_arg_context {
 			long	hi;
 		} ll;
 		unsigned char	v[16];
-	} val;
+	} __align(16) val;
 	struct mcount_arch_context *arch;
 	struct mcount_mem_regions *regions;
 };
