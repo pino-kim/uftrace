@@ -1253,7 +1253,7 @@ static void save_module_symbol(struct symtab *stab, const char *symfile,
 {
 	FILE *fp;
 	unsigned i;
-	bool has_plt;
+	enum symtype prev_type;
 
 	if (stab->nr_sym == 0)
 		return;
@@ -1267,29 +1267,29 @@ static void save_module_symbol(struct symtab *stab, const char *symfile,
 
 	pr_dbg2("saving symbols to %s\n", symfile);
 
-	has_plt = (stab->sym[0].type == ST_PLT);
+	prev_type = stab->sym[0].type;
 
-	/* PLT + normal symbols */
+	/* PLT + normal symbols (in any order)*/
 	for (i = 0; i < stab->nr_sym; i++) {
 		struct sym *sym = &stab->sym[i];
 
-		/* mark end of the dynamic (PLT) symbols */
-		if (has_plt && sym->type != 'P') {
+		/* mark end of the this kind of symbols */
+		if (sym->type != prev_type) {
 			struct sym *prev = sym - 1;
 
-			fprintf(fp, "%016"PRIx64" %c %s\n",
-				prev->addr + prev->size - offset,
-				'P', "__dynsym_end");
-			has_plt = false;
+			fprintf(fp, "%016"PRIx64" %c __%ssym_end\n",
+				prev->addr + prev->size - offset, (char)prev->type,
+				prev->type == ST_PLT ? "dyn" : "");
 		}
+		prev_type = sym->type;
 
 		fprintf(fp, "%016"PRIx64" %c %s\n", sym->addr - offset,
 			(char) sym->type, sym->name);
 	}
 	if (i > 0) {
-		fprintf(fp, "%016"PRIx64" %c %s\n",
+		fprintf(fp, "%016"PRIx64" %c __%ssym_end\n",
 			stab->sym[i-1].addr + stab->sym[i-1].size - offset,
-			(char) stab->sym[i-1].type, "__sym_end");
+			(char) prev_type, prev_type == ST_PLT ? "dyn" : "");
 	}
 
 	fclose(fp);
